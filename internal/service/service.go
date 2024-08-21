@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/VikaPaz/matchmaker/internal/models"
@@ -27,12 +26,9 @@ type MatchService struct {
 }
 
 type Repo interface {
-	QueryMatching(clusterID uint, count uint) ([]models.Player, error)
-	QueryDel(uint, uint) error
+	QueryMatching(clusterID string, count int64) ([]models.Player, error)
+	QueryDel(string, uint) error
 	QueryAdd(player models.Player, cluster string, score float64) error
-	// OuerySumSkill(uint) (float64, error)
-	// OuerySumLatency(uint) (float64, error)
-	// OueryCountPlayers(uint) (float64, error)
 }
 
 func NewService(r Repo, maxSkill float64, maxLatency float64, logger *logrus.Logger) *MatchService {
@@ -51,7 +47,7 @@ func (s *MatchService) Matching(groupSize int) error {
 			continue
 		}
 		s.log.Debug("Matching...")
-		players, err := s.repo.QueryMatching(cluster.ID, uint(groupSize))
+		players, err := s.repo.QueryMatching(fmt.Sprintf("%d", cluster.ID), int64(groupSize))
 		if err != nil {
 			s.log.Errorf("Error create group: %v", err)
 			return err
@@ -61,7 +57,7 @@ func (s *MatchService) Matching(groupSize int) error {
 		}
 
 		for _, player := range players {
-			err := s.repo.QueryDel(cluster.ID, player.ID)
+			err := s.repo.QueryDel(fmt.Sprintf("%d", cluster.ID), player.ID)
 			if err != nil {
 				return err
 			}
@@ -87,19 +83,17 @@ func updateCentersDel(players []models.Player, id int) error {
 	for _, player := range players {
 		cluster.Center.Skill = (cluster.Center.Skill*float64(cluster.Count) - player.Skill) / (float64(cluster.Count) - 1)
 		cluster.Center.Latency = (cluster.Center.Latency*float64(cluster.Count) - player.Latency) / (float64(cluster.Count) - 1)
-		// TODO AddedS
-
 	}
 	clusters[id] = cluster
-	fmt.Println(clusters[id])
 	return nil
 }
 
 func showResp(resp models.MatchResponse) {
-	fmt.Println(resp.Group)
-	fmt.Println(resp.Skill)
-	fmt.Println(resp.Latency)
-	fmt.Println(resp.Added)
+	fmt.Printf("Group: %v \n", resp.Group)
+	fmt.Printf("Skill min/max/avg: %v \n", resp.Skill)
+	fmt.Printf("Latency min/max/avg: %v \n", resp.Latency)
+	fmt.Printf("Added min/max/avg: %v \n", resp.Added)
+	fmt.Printf("Payers: ")
 	for _, player := range resp.Players {
 		fmt.Print(player.Name, " ")
 	}
@@ -117,6 +111,7 @@ func creatResponse(players []models.Player, group uint) models.MatchResponse {
 	}
 	var sumSkill, sumLatency float64
 	var sumAdded int64
+	resp.Added[0] = players[0].Added
 	for _, player := range players {
 		sumSkill += player.Skill
 		sumLatency += player.Latency
@@ -134,10 +129,10 @@ func creatResponse(players []models.Player, group uint) models.MatchResponse {
 			resp.Latency[1] = player.Latency
 		}
 		if player.Added.UTC().Unix() < resp.Added[0].UTC().Unix() {
-			resp.Latency[0] = player.Latency
+			resp.Added[0] = player.Added
 		}
 		if player.Added.UTC().Unix() > resp.Added[1].UTC().Unix() {
-			resp.Latency[1] = player.Latency
+			resp.Added[1] = player.Added
 		}
 	}
 	countPlayers := float64(len(players))
@@ -167,7 +162,7 @@ func (s *MatchService) AddPlayer(req models.AddRequest) (models.Player, error) {
 
 	score := euclideanDistance(player, superPlayer)
 
-	err = s.repo.QueryAdd(player, strconv.FormatUint(uint64(clasterID), 10), score)
+	err = s.repo.QueryAdd(player, fmt.Sprintf("%d", clasterID), score)
 	if err != nil {
 		s.log.Error("Error add to Cluster")
 		return models.Player{}, err
@@ -178,11 +173,6 @@ func (s *MatchService) AddPlayer(req models.AddRequest) (models.Player, error) {
 		s.log.Error("Error update centers of Clusters")
 		return models.Player{}, err
 	}
-
-	fmt.Println(clasterID, player)
-
-	fmt.Println(clusters)
-
 	return player, nil
 }
 
@@ -190,33 +180,9 @@ func updateCenters(player models.Player, id int) error {
 	count := float64(clusters[id].Count)
 	clusters[id].Center.Skill = (clusters[id].Center.Skill*count + player.Skill) / (count + 1)
 	clusters[id].Center.Latency = (clusters[id].Center.Latency*count + player.Latency) / (count + 1)
-	// TODO Added
 	clusters[id].Count += 1
 	return nil
 }
-
-// clusters forom Repo
-
-// func updateCenters(s *MatchService, id uint) error {
-// 	sumSkill, err := s.repo.OuerySumSkill(id)
-// 	if err != nil {
-// 		s.log.Error("Error query sum of skill")
-// 		return err
-// 	}
-// 	sumLatency, err := s.repo.OuerySumLatency(id)
-// 	if err != nil {
-// 		s.log.Error("Error query sum of latency")
-// 		return err
-// 	}
-// 	count, err := s.repo.OueryCountPlayers(id)
-// 	if err != nil {
-// 		s.log.Error("Error query count of players")
-// 		return err
-// 	}
-// 	clusters[id].Center.Skill = sumSkill / count
-// 	clusters[id].Center.Latency = sumLatency / count
-// 	return nil
-// }
 
 func assignCluster(player models.Player) (uint, error) {
 	minDistance := math.Inf(1)
@@ -231,8 +197,6 @@ func assignCluster(player models.Player) (uint, error) {
 			minDistance = dist
 			clusterID = cluster.ID
 		}
-
-		fmt.Println(dist)
 	}
 	return clusterID, nil
 }
