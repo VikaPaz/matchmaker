@@ -20,9 +20,12 @@ var clusters = make([]models.Cluster, 3)
 
 var id uint
 
+var wPostgre bool
+
 type MatchService struct {
-	repo Repo
-	log  *logrus.Logger
+	repo    Repo
+	postgre Postgre
+	log     *logrus.Logger
 }
 
 type Repo interface {
@@ -31,12 +34,19 @@ type Repo interface {
 	QueryAdd(player models.Player, cluster string, score float64) error
 }
 
-func NewService(r Repo, maxSkill float64, maxLatency float64, logger *logrus.Logger) *MatchService {
+type Postgre interface {
+	Create(models.Player) error
+	Delete(uint) error
+}
+
+func NewService(r Repo, p Postgre, maxSkill float64, maxLatency float64, logger *logrus.Logger, writePostgres bool) *MatchService {
 	superPlayer.Skill = maxSkill
 	superPlayer.Latency = maxLatency
+	wPostgre = writePostgres
 	return &MatchService{
-		repo: r,
-		log:  logger,
+		repo:    r,
+		postgre: p,
+		log:     logger,
 	}
 }
 
@@ -58,6 +68,13 @@ func (s *MatchService) Matching(groupSize int) error {
 
 		for _, player := range players {
 			err := s.repo.QueryDel(fmt.Sprintf("%d", cluster.ID), player.ID)
+			if err != nil {
+				return err
+			}
+			if !wPostgre {
+				continue
+			}
+			err = s.postgre.Delete(player.ID)
 			if err != nil {
 				return err
 			}
@@ -166,6 +183,14 @@ func (s *MatchService) AddPlayer(req models.AddRequest) (models.Player, error) {
 	if err != nil {
 		s.log.Error("Error add to Cluster")
 		return models.Player{}, err
+	}
+
+	if wPostgre {
+		err = s.postgre.Create(player)
+		if err != nil {
+			s.log.Error("Error add to Postgres")
+			return models.Player{}, err
+		}
 	}
 
 	err = updateCenters(player, int(clasterID))

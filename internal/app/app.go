@@ -8,6 +8,7 @@ import (
 
 	"github.com/VikaPaz/matchmaker/internal/models"
 	"github.com/VikaPaz/matchmaker/internal/repository"
+	"github.com/VikaPaz/matchmaker/internal/repository/postgres"
 	"github.com/VikaPaz/matchmaker/internal/server"
 	"github.com/VikaPaz/matchmaker/internal/service"
 	"github.com/sirupsen/logrus"
@@ -15,6 +16,10 @@ import (
 
 type RedisConfig struct {
 	DB repository.Config
+}
+
+type PostgresConfig struct {
+	DB postgres.Config
 }
 
 func Run(logger *logrus.Logger) error {
@@ -42,11 +47,27 @@ func Run(logger *logrus.Logger) error {
 		return models.ErrLoadEnvFailed
 	}
 
+	wPostgre, err := strconv.ParseBool(os.Getenv("WRITE_TO_POSTGRES"))
+	if err != nil {
+		logger.Errorf("Error loading .env file: %v", err)
+		return models.ErrLoadEnvFailed
+	}
+
 	confRedis := RedisConfig{
 		DB: repository.Config{
 			Host:     os.Getenv("HOST"),
 			Port:     os.Getenv("REDIS_PORT"),
 			Password: os.Getenv("PASSWORD"),
+		},
+	}
+
+	confPostgres := PostgresConfig{
+		DB: postgres.Config{
+			Host:     os.Getenv("HOST"),
+			Port:     os.Getenv("POSTGRES_PORT"),
+			User:     os.Getenv("USER"),
+			Password: os.Getenv("POSTGRE_PASSWORD"),
+			Dbname:   os.Getenv("DB_NAME"),
 		},
 	}
 
@@ -56,7 +77,13 @@ func Run(logger *logrus.Logger) error {
 	}
 	repo := repository.NewRepo(redisConn, logger)
 
-	matcher := service.NewService(repo, maxSkill, maxLatency, logger)
+	postgresConn, err := postgres.Connection(confPostgres.DB)
+	if err != nil {
+		return err
+	}
+	postgresRepo := postgres.NewRepo(postgresConn, logger)
+
+	matcher := service.NewService(repo, postgresRepo, maxSkill, maxLatency, logger, wPostgre)
 
 	go func() {
 		for {
