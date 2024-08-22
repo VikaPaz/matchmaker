@@ -78,7 +78,7 @@ Adding a player: To add a player to the system, use the following HTTP request:
 
     {
     “latency": 30,
-    “name": ‘player1’,
+    “name": "player1",
     “skill": 50
     }
     ```
